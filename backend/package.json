@@ -1,0 +1,30 @@
+{
+  "name": "bookishbae-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BookishBae — Backend API, controllers, services, database, auth, and payment integrations",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env.local src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "node --import tsx tests/run.ts",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "seed:dry": "tsx scripts/seed.ts --dry-run"
+  },
+  "dependencies": {
+    "@getbrevo/brevo": "^6.2.0",
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.47.10",
+    "cashfree-pg": "^6.0.6",
+    "cloudinary": "^2.11.0",
+    "next": "^14.2.21",
+    "pdf-lib": "^1.17.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

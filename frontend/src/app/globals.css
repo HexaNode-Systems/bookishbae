@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * BookishBae design tokens.
+ *
+ * Soft cream paper, deep plum ink, rose-gold accent. Everything is declared as
+ * HSL channel triplets (no `hsl()` wrapper) so Tailwind can apply opacity
+ * modifiers — `bg-primary/10` only works that way.
+ *
+ * The palette is deliberately narrow. A bookshop should look like one object,
+ * not a collection of components, so new surfaces should reach for an existing
+ * token before inventing a shade.
+ */
+
+@layer base {
+  :root {
+    /* Raw brand shades, for gradients and decorative rules */
+    --brand-cream: 33 56% 97%;
+    --brand-blush: 8 48% 93%;
+    --brand-plum: 311 42% 21%;
+    --brand-rosegold: 350 34% 58%;
+
+    /* Semantic tokens */
+    --background: 33 56% 97%;
+    --foreground: 320 25% 14%;
+
+    --card: 36 50% 99%;
+    --card-foreground: 320 25% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 320 25% 14%;
+
+    --primary: 311 42% 21%;
+    --primary-foreground: 33 56% 97%;
+
+    --secondary: 8 48% 93%;
+    --secondary-foreground: 311 42% 21%;
+
+    --muted: 30 32% 94%;
+    --muted-foreground: 320 11% 42%;
+
+    --accent: 350 34% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 68% 44%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 46% 32%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 24 26% 88%;
+    --input: 24 26% 86%;
+    --ring: 350 34% 58%;
+
+    --radius: 0.75rem;
+  }
+
+  /*
+   * Dark mode is opt-in via a `.dark` class rather than a media query. A shop
+   * whose covers and sample pages were designed on cream should not flip to
+   * near-black because of an OS setting the reader forgot about.
+   */
+  .dark {
+    --brand-cream: 320 18% 11%;
+    --brand-blush: 320 16% 18%;
+    --brand-plum: 311 36% 76%;
+    --brand-rosegold: 350 40% 66%;
+
+    --background: 320 18% 9%;
+    --foreground: 33 36% 94%;
+
+    --card: 320 16% 12%;
+    --card-foreground: 33 36% 94%;
+
+    --popover: 320 16% 12%;
+    --popover-foreground: 33 36% 94%;
+
+    --primary: 350 36% 72%;
+    --primary-foreground: 320 25% 12%;
+
+    --secondary: 320 14% 18%;
+    --secondary-foreground: 33 36% 94%;
+
+    --muted: 320 12% 17%;
+    --muted-foreground: 320 10% 66%;
+
+    --accent: 350 40% 64%;
+    --accent-foreground: 320 25% 12%;
+
+    --destructive: 0 62% 52%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 40% 48%;
+    --success-foreground: 320 25% 12%;
+
+    --border: 320 12% 22%;
+    --input: 320 12% 24%;
+    --ring: 350 40% 64%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  /* Respect a reader who has asked the OS to stop moving things. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'kern' 1,
+      'liga' 1,
+      'calt' 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-serif text-balance;
+  }
+
+  /* Long prose reads better with a hint of hanging punctuation and tighter wraps. */
+  p {
+    @apply text-pretty;
+  }
+
+  /* One visible focus style everywhere, keyboard-only. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  ::selection {
+    background: hsl(var(--brand-rosegold) / 0.28);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+}
+
+@layer components {
+  /**
+   * Skeleton shimmer used by loading states. Sits in @layer components so a
+   * utility class on the same element can still override the background.
+   */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-muted;
+  }
+
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    content: '';
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--background) / 0.65),
+      transparent
+    );
+  }
+
+  /* Decorative rule between sections, fading at both ends. */
+  .hairline {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+  }
+}
+
+@layer utilities {
+  /* Visually hidden but available to screen readers and skip links. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    @apply sr-only;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}

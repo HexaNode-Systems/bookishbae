@@ -1,0 +1,23 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@/lib/supabase/admin",
+            "message": "The service-role client must only be imported from server code (route handlers, server actions, scripts). If you hit this in a component, you are about to leak the key."
+          }
+        ]
+      }
+    ],
+    "no-console": ["warn", { "allow": ["warn", "error"] }]
+  },
+  "overrides": [
+    {
+      "files": ["scripts/**/*.ts", "src/lib/**/*.ts", "src/app/api/**/*.ts"],
+      "rules": { "no-restricted-imports": "off", "no-console": "off" }
+    }
+  ]
+}
