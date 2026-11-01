@@ -41,7 +41,11 @@ export async function launchChrome(prefix = 'bookishbae-verification-') {
   };
   const until = async (expression, label, timeout = 60_000) => {
     const end = Date.now() + timeout;
-    while (Date.now() < end) { if (await evaluate(`Boolean(${expression})`)) return; await new Promise(resolve => setTimeout(resolve, 250)); }
+    while (Date.now() < end) {
+      try { if (await evaluate(`Boolean(${expression})`)) return; }
+      catch (error) { if (!/Execution context was destroyed|Cannot find context|Cannot find default execution context|Inspected target navigated/.test(error.message)) throw error; }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
     throw Error(`Timed out: ${label}\n${await evaluate('document.body.innerText.slice(0, 1800)')}`);
   };
   const fill = (selector, value) => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) throw Error('Missing field: ' + ${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(e.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : e.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value').set.call(e, ${JSON.stringify(value)}); e.dispatchEvent(new Event(e.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); })()`);

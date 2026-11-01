@@ -25,8 +25,26 @@ try {
   assert.match(contenders.find(result => result.code !== 0).stderr, /exhausted/);
   const count = await run(['-t', '-A', '-c', `select count(*) from public.orders where coupon_id='${coupon}';`]);
   assert.equal(count.stdout.trim(), '1');
-  console.log('PostgreSQL author-commerce assertions passed; concurrent coupon reservation limit passed.');
+
+  // Real row-lock contention for the conditional update used by guest claims.
+  // These disposable fixtures never contact Cashfree or mark real orders paid.
+  const guest = await run(['-t', '-A', '-c', `select (public.create_checkout_order('${book}','guest-${book}@example.com','Guest fixture')->'order'->>'id');`]);
+  assert.equal(guest.code, 0, guest.stderr);
+  const guestId = guest.stdout.trim();
+  assert.match(guestId, /^[a-f0-9-]{36}$/i);
+  const paidFixture = await run(['-c', `update public.orders set status='paid',paid_at=now() where id='${guestId}'; update public.order_items set download_limit=1 where order_id='${guestId}';`]);
+  assert.equal(paidFixture.code, 0, paidFixture.stderr);
+  const downloads = await Promise.all([1, 2].map(() => run(['-t', '-A', '-c', `update public.order_items set downloads_used=1,last_downloaded_at=now() where order_id='${guestId}' and product_id='${book}' and downloads_used=0 and download_limit=1 and download_limit_override is null returning id;`])));
+  for (const result of downloads) assert.equal(result.code, 0, result.stderr);
+  assert.equal(downloads.filter(result => result.stdout.trim()).length, 1, 'Only one concurrent guest request can consume the final slot');
+  const counter = await run(['-t', '-A', '-c', `select downloads_used from public.order_items where order_id='${guestId}';`]);
+  assert.equal(counter.stdout.trim(), '1');
+  const released = await run(['-c', `select public.release_download(id) from public.order_items where order_id='${guestId}';`]);
+  assert.equal(released.code, 0, released.stderr);
+  const restored = await run(['-t', '-A', '-c', `select downloads_used from public.order_items where order_id='${guestId}';`]);
+  assert.equal(restored.stdout.trim(), '0');
+  console.log('PostgreSQL author-commerce assertions, concurrent coupon reservation, concurrent guest download limit and quota restoration passed.');
 } finally {
-  const cleaned = await run(['-c', `begin; delete from public.orders where coupon_id='${coupon}'; delete from public.coupons where id='${coupon}'; delete from public.products where id='${book}'; commit;`]);
+  const cleaned = await run(['-c', `begin; delete from public.orders where coupon_id='${coupon}' or id in (select order_id from public.order_items where product_id='${book}'); delete from public.coupons where id='${coupon}'; delete from public.products where id='${book}'; commit;`]);
   assert.equal(cleaned.code, 0, cleaned.stderr);
 }

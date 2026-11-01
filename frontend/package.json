@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --import tsx --test tests/store-flows.test.tsx",
+    "test": "node --import tsx --test tests/store-flows.test.tsx tests/checkout-security.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

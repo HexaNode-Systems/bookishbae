@@ -2,6 +2,8 @@
 // Never submits a payment and never replaces application network responses.
 import { Cashfree, CFEnvironment } from 'cashfree-pg';
 import { launchChrome } from '../../frontend/tests/chrome-driver.mjs';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 if (process.env.CASHFREE_ENVIRONMENT !== 'TEST') throw Error('Production checkout verification is forbidden.');
 const reference = process.argv[2];
@@ -30,8 +32,12 @@ try {
   catch (error) { console.log(JSON.stringify({ browserErrors, requests, screenshot: await browser.screenshot('hosted-error.png') }, null, 2)); throw error; }
   const host = await browser.evaluate('location.hostname');
   const error = await browser.evaluate("window.__cashfreeError || ''");
+  if (!error && host.endsWith('.cashfree.com')) await browser.until("document.readyState === 'complete' && document.body.innerText.trim().length > 80", 'hosted payment page rendering', 30000);
   const screenshot = await browser.screenshot('hosted-sandbox.png');
   const text = await browser.evaluate('document.body.innerText.slice(0, 1200)');
-  console.log(JSON.stringify({ mode: 'sandbox', orderReference: reference, host, error, browserErrors, requests, screenshot, pageText: text, paymentSubmitted: false }, null, 2));
-  if (error || !host.endsWith('.cashfree.com')) process.exitCode = 1;
+  const hostedFormRendered = /Payment Options|Pay Now|Scan and pay/i.test(text);
+  await writeFile(path.join(browser.artifacts, 'network.json'), JSON.stringify({ requests, browserErrors }, null, 2));
+  const checkoutRequests = requests.filter(request => ['/pg/view/sessions/checkout', '/checkout/'].includes(request.path));
+  console.log(JSON.stringify({ mode: 'sandbox', orderReference: reference, host, error, hostedFormRendered, browserErrors, checkoutRequests, screenshot, paymentSubmitted: false }, null, 2));
+  if (error || !host.endsWith('.cashfree.com') || !hostedFormRendered) process.exitCode = 1;
 } finally { browser.close(); }

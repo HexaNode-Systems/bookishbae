@@ -16,6 +16,7 @@ async function main() {
 
   await import('./backend.test');
   await import('./author-commerce.test');
+  await import('./download-entitlement.test');
 }
 
 void main();

@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError } from '@/lib/api/errors';
 import { getCategories, databaseError } from '@/lib/author-commerce';
 import { withProductAssets } from '@/lib/product-assets';
+import { claimOrderDownload, releaseDatabaseDownload, type DownloadClaim } from '@/lib/download-entitlement';
 
 import { BOOKS } from '@/lib/books';
 import { createCashfreeOrder, fetchCashfreeOrder, refundCashfreePayment } from '@/lib/cashfree';
@@ -928,14 +929,12 @@ export async function claimDownload(
   userIdOrEmail: string,
   productId: string,
   orderId?: string,
-): Promise<{
-  allowed: boolean;
-  orderItemId?: string;
-  orderId?: string;
-  downloadsUsed?: number;
-  downloadLimit?: number;
-  reason?: string;
-}> {
+): Promise<DownloadClaim> {
+  // Guest checkout orders have no auth UUID. Use their verified, exact order
+  // instead of passing an email to the user-only claim_download RPC.
+  if (orderId && !(env.NODE_ENV === 'test' && stagingOrders.has(orderId))) {
+    return claimOrderDownload(userIdOrEmail, productId, orderId);
+  }
   // 1. Try Supabase atomic claim_download RPC
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userIdOrEmail);
   if (isUuid) {
@@ -946,6 +945,11 @@ export async function claimDownload(
         p_product_id: productId,
       });
 
+      if (error && !(env.NODE_ENV === 'test' && error.code === 'TEST_NETWORK_DISABLED')) {
+        logger.error('Supabase claim_download RPC failed', { code: error.code, message: error.message });
+        throw new ApiError('upstream_error', 'Could not check download access. Please try again shortly.');
+      }
+
       if (!error && data && typeof data === 'object') {
         const res = data as Record<string, unknown>;
         return {
@@ -954,17 +958,20 @@ export async function claimDownload(
           orderId: res.order_id as string,
           downloadsUsed: res.downloads_used as number,
           downloadLimit: res.download_limit as number,
-          reason: res.reason as string,
+          reason: res.reason === 'limit_reached' ? 'download_limit_reached' : res.reason as string,
         };
       }
     } catch (err) {
-      logger.warn('Supabase claim_download RPC failed, checking staging entitlement', { err });
+      if (err instanceof ApiError) throw err;
+      logger.error('Supabase claim_download RPC failed', { err });
+      throw new ApiError('upstream_error', 'Could not check download access. Please try again shortly.');
     }
   }
 
   assertStagingFallbackAllowed('claim download entitlement');
   // 2. Entitlement check in staging store
   for (const order of stagingOrders.values()) {
+    if (orderId && order.id !== orderId) continue;
     const matchesUser =
       (order.user_id && order.user_id === userIdOrEmail) ||
       order.email.toLowerCase() === userIdOrEmail.toLowerCase() ||
@@ -1012,20 +1019,16 @@ export async function claimDownload(
 }
 
 export async function releaseDownload(orderItemId: string): Promise<void> {
-  try {
-    const admin = createAdminClient();
-    await admin.rpc('release_download', { p_order_item_id: orderItemId });
-  } catch (err) {
-    logger.warn('Supabase release_download RPC failed', { err });
-  }
-
-  for (const items of stagingOrderItems.values()) {
-    const item = items.find((i) => i.id === orderItemId);
-    if (item && item.downloads_used > 0) {
-      item.downloads_used -= 1;
-      break;
+  if (env.NODE_ENV === 'test') {
+    for (const items of stagingOrderItems.values()) {
+      const item = items.find((i) => i.id === orderItemId);
+      if (item) {
+        item.downloads_used = Math.max(0, item.downloads_used - 1);
+        return;
+      }
     }
   }
+  await releaseDatabaseDownload(orderItemId);
 }
 
 export async function recordDownloadAudit(params: {
