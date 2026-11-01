@@ -26,6 +26,9 @@ import * as adminCategories from './api/admin/categories/route';
 import * as adminCategory from './api/admin/categories/[id]/route';
 import * as adminCoupons from './api/admin/coupons/route';
 import * as adminCoupon from './api/admin/coupons/[id]/route';
+import * as authMe from './api/auth/me/route';
+import * as adminProfile from './api/admin/profile/route';
+import { closeDatabase } from './lib/db/postgres';
 import { env } from './config/env';
 import { logger } from './middleware/logger';
 
@@ -120,6 +123,8 @@ export const server = createServer(async (req, res) => {
     }
 
     // --- Products ---
+    if (pathname === '/api/auth/me' && method === 'GET') return await sendWebResponse(await authMe.GET(webReq), res);
+    if (pathname === '/api/admin/profile' && method === 'PATCH') return await sendWebResponse(await adminProfile.PATCH(webReq), res);
     if (pathname === '/api/products') {
       if (method === 'GET') {
         const out = await ProductController.getPublicProducts(webReq);
@@ -341,7 +346,7 @@ export const server = createServer(async (req, res) => {
       return;
     }
     logger.error('Unhandled server exception', {
-      error: err instanceof Error ? err.message : String(err),
+      error: 'Unexpected request failure',
       path: pathname,
     });
     res.statusCode = 500;
@@ -350,7 +355,7 @@ export const server = createServer(async (req, res) => {
       JSON.stringify({
         error: {
           code: 'internal_error',
-          message: err instanceof Error ? err.message : 'An unexpected server error occurred.',
+          message: 'An unexpected server error occurred.',
         },
       }),
     );
@@ -364,6 +369,19 @@ server.keepAliveTimeout = 5_000;
 server.maxHeadersCount = 100;
 
 if (require.main === module || process.env.NODE_ENV !== 'test') {
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const deadline = setTimeout(() => process.exit(1), 15000);
+    deadline.unref();
+    server.close(() => {
+      void closeDatabase().then(() => { clearTimeout(deadline); process.exitCode = 0; })
+        .catch(() => { clearTimeout(deadline); process.exitCode = 1; });
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
   server.listen(PORT, '0.0.0.0', () => {
     logger.info(`BookishBae Backend Server running on port ${PORT} (0.0.0.0)`);
   });

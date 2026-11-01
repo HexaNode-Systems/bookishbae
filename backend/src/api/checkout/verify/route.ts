@@ -1,4 +1,4 @@
-import { notFound } from '@/lib/api/errors';
+import { notFound, forbidden, unauthenticated, ApiError } from '@/lib/api/errors';
 import { createHandler } from '@/lib/api/handler';
 import { confirmCashfreePayment } from '@/lib/payment-verification';
 import { getOrderById, markOrderPaid } from '@/lib/db/repository';
@@ -15,11 +15,15 @@ export const POST = createHandler(
     body: verifyRequestSchema,
     rateLimit: { name: 'checkout', by: 'user-or-ip' },
   },
-  async ({ body, log }) => {
+  async ({ body, user, log }) => {
+    // Guests retain the random order UUID issued at checkout as a capability.
+    // Predictable order numbers are only accepted for an authenticated owner.
+    if (!user && !/^[0-9a-f-]{36}$/i.test(body.orderId)) throw unauthenticated();
     const order = await getOrderById(body.orderId);
     if (!order) {
       throw notFound('Order not found.');
     }
+    if (user && order.user_id !== user.id && order.email !== user.email?.toLowerCase()) throw forbidden();
 
     // If order is already fulfilled and paid in our ledger
     if (order.status === 'paid') {
@@ -73,6 +77,7 @@ export const POST = createHandler(
 
       return { verified: true, paid: false, orderId: order.id, orderNumber: order.order_number, status: confirmation.status };
     } catch (cfError) {
+      if (cfError instanceof ApiError) throw cfError;
       log.warn('Could not fetch Cashfree order status directly', { cfError });
       return {
         verified: false,

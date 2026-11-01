@@ -46,9 +46,7 @@ through the hosting provider, not committed to either file.
 
 ### Run the migrations
 
-Before you run `0004`, open it and replace `change-me@example.com` with your own
-email, lowercase. That list is what makes your account an admin on first
-sign-in; get it wrong and you will be editing the database by hand to fix it.
+See [direct PostgreSQL and secure admin setup](DATABASE.md) for `DATABASE_URL`, TLS and the seed command. Review and apply only unapplied migrations; do not edit historical migrations to configure an admin.
 
 **SQL Editor**, one file at a time, in order:
 
@@ -58,6 +56,8 @@ sign-in; get it wrong and you will be editing the database by hand to fix it.
 4. `supabase/migrations/0004_bootstrap.sql`
 5. `supabase/migrations/0005_cashfree_faq.sql`
 6. `supabase/migrations/0006_admin_dashboard_metrics.sql`
+7. `supabase/migrations/0007_author_commerce.sql`
+8. `supabase/migrations/0008_direct_postgres_admin.sql`
 
 `0002` creates two triggers on `auth.users`. The SQL editor runs as `postgres`,
 which owns that table, so this works — but if you apply migrations some other
@@ -201,7 +201,7 @@ npm run dev:frontend
 `npm run seed:dry` generates the artefacts into `backend/scripts/.generated/` without
 touching Cloudinary or the database — useful for looking at the covers first.
 
-Sign in with the email you put in `0004_bootstrap.sql`, and `/admin` should open.
+Run `npm run db:seed-admin` from the repository root after configuring the backend variables in [DATABASE.md](DATABASE.md), then use the existing `/sign-in` email/password form.
 
 ---
 

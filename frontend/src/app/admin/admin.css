@@ -1003,6 +1003,17 @@
   flex-wrap: wrap;
   padding-top: 10px;
 }
+.admin-photo-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.admin-photo-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .admin-profile-card {
   display: flex;
   align-items: center;

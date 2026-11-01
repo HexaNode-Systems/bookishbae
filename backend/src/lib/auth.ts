@@ -1,3 +1,4 @@
+import { getProfile } from './db/profiles';
 /**
  * Auth helpers for Server Components, layouts and server actions.
  *
@@ -11,7 +12,6 @@
 
 import { notFound, redirect } from 'next/navigation';
 
-import { isDevelopment } from '@/lib/env';
 import { createReadOnlyClient } from '@/lib/supabase/server';
 import type { Profile } from '@/types/database';
 
@@ -26,10 +26,7 @@ export interface AuthState {
   isAdmin: boolean;
 }
 
-const PROFILE_COLUMNS =
-  'id, email, full_name, avatar_url, phone, role, marketing_opt_in, created_at, updated_at';
-
-/** Current viewer, or nulls. Never throws; safe in a shared layout. */
+/** Current viewer. Database/backend errors fail closed. */
 export async function getAuth(): Promise<AuthState> {
   const supabase = createReadOnlyClient();
 
@@ -39,19 +36,9 @@ export async function getAuth(): Promise<AuthState> {
 
   if (!user) return { user: null, profile: null, isAdmin: false };
 
-  const { data } = await supabase
-    .from('profiles')
-    .select(PROFILE_COLUMNS)
-    .eq('id', user.id)
-    .single();
-
-  const profile = (data as Profile | null) ?? null;
-
-  return {
-    user: { id: user.id, email: user.email ?? null },
-    profile,
-    isAdmin: profile?.role === 'admin',
-  };
+  const stored = await getProfile(user.id);
+  const { is_admin, ...profile } = stored ?? { is_admin: false };
+  return { user: { id: user.id, email: user.email ?? null }, profile: stored ? profile as Profile : null, isAdmin: is_admin };
 }
 
 /**
@@ -63,12 +50,6 @@ export async function requireUser(
   const { user, profile } = await getAuth();
 
   if (!user) {
-    if (isDevelopment) {
-      return {
-        user: { id: 'dev-user-id', email: 'admin@appnix.info' },
-        profile,
-      };
-    }
     const next = returnTo ? `?next=${encodeURIComponent(returnTo)}` : '';
     redirect(`/sign-in${next}`);
   }
@@ -89,28 +70,6 @@ export async function requireUser(
  */
 export async function requireAdmin(): Promise<{ user: SessionUser; profile: Profile }> {
   const { user, profile, isAdmin } = await getAuth();
-
-  if (isDevelopment) {
-    if (user && isAdmin && profile) {
-      return { user, profile };
-    }
-    return {
-      user: user ?? { id: 'dev-admin-id', email: 'admin@appnix.info' },
-      profile:
-        profile ??
-        ({
-          id: 'dev-admin-id',
-          email: 'admin@appnix.info',
-          full_name: 'Annu (Admin)',
-          role: 'admin',
-          avatar_url: null,
-          phone: null,
-          marketing_opt_in: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as Profile),
-    };
-  }
 
   if (!user) redirect('/sign-in?next=%2Fadmin');
   if (!isAdmin || !profile) notFound();

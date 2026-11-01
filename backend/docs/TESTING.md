@@ -9,7 +9,7 @@ npm run lint
 npm run build
 ```
 
-The backend test runner supplies fake credentials and uses a closed loopback address for Supabase, so test runs do not load local credentials or connect to a real project.
+The backend test runner supplies fake credentials, applies migrations 0001?0008 to an isolated PGlite PostgreSQL engine, and stubs only external Auth/storage/payment transports and pg connections. It rejects PostgREST calls. Tests never load local credentials or connect to a real project. See [DATABASE.md](DATABASE.md) for real PostgreSQL verification and manual login checks.
 
 Before accepting live payments, run `supabase/tests/security.sql` against a disposable Supabase project/database with `ON_ERROR_STOP=1`. Apply migrations in order first. Never run the security fixture script against production.
 
@@ -30,5 +30,5 @@ Before accepting live payments, run `supabase/tests/security.sql` against a disp
 - Confirm the production runtime explicitly sets `NODE_ENV=production`.
 - Confirm the frontend has a valid HTTPS `BACKEND_URL` and can reach the API health endpoint.
 - Confirm missing/invalid environment variables stop startup.
-- Confirm Supabase outage returns an error in production; it must never switch to in-memory fixture orders or simulated payment sessions.
+- Confirm PostgreSQL outage returns an error in every runtime mode; it must never switch to in-memory fixture orders or simulated payment sessions.
 - Inspect logs for request IDs and redaction; do not log tokens, payment secrets, raw authorization headers, or private PDF URLs.

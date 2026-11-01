@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -86,9 +86,18 @@ export function AdminWorkspace({
   const [notice, setNotice] = useState<Notice>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const profileDirtyChange = useCallback((value: boolean) => {
+    setDirty(value);
+    if (value) setNotice(current => current?.kind === 'success' ? null : current);
+  }, []);
   const [pendingSection, setPendingSection] = useState<AdminSection | null>(
     null,
   );
+  const profileSavingChange = useCallback((value: boolean) => {
+    setProfileSaving(value);
+    if (value) setPendingSection(null);
+  }, []);
   const [loadingCatalogue, setLoadingCatalogue] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
@@ -211,6 +220,10 @@ export function AdminWorkspace({
 
   const navigate = (section: AdminSection) => {
     if (section === active && !editing) return;
+    if (profileSaving) {
+      setNotice({ kind: 'error', text: 'Please wait for your profile to finish saving.' });
+      return;
+    }
     if (dirty) {
       setPendingSection(section);
       return;
@@ -907,12 +920,14 @@ export function AdminWorkspace({
               onSaved={(updated) => {
                 setIdentity(updated);
                 setDirty(false);
+                setPendingSection(null);
                 setNotice({
                   kind: 'success',
                   text: 'Your profile details have been saved.',
                 });
               }}
-              onDirtyChange={setDirty}
+              onDirtyChange={profileDirtyChange}
+              onSavingChange={profileSavingChange}
             />
           )}
 

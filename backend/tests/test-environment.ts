@@ -1,6 +1,8 @@
 export function configureTestEnvironment() {
   Object.assign(process.env, {
     NODE_ENV: 'test',
+    DATABASE_URL: 'postgresql://test@127.0.0.1:1/bookishbae_test',
+    DATABASE_SSL_MODE: 'disable',
     NEXT_PUBLIC_SITE_URL: 'http://localhost:3000',
     NEXT_PUBLIC_SUPABASE_URL: 'https://supabase.test.invalid',
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon-key-not-a-real-secret',

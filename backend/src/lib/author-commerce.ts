@@ -1,64 +1,42 @@
-import { ApiError, badRequest, notFound } from './api/errors';
-import { createAdminClient } from './supabase/admin';
+import { ApiError, notFound } from './api/errors';
+import { db, transaction, databaseFailure } from './db/postgres';
 import type { Category, Coupon } from '@/types/database';
 import type { z } from 'zod';
 import type { categorySchema, couponUpsertSchema } from './validation/schemas';
-import { logger } from './logger';
-
-export function databaseError(error: { code?: string; message?: string } | null): never {
-  logger.error('Author commerce database operation failed', { code: error?.code, message: error?.message });
-  if (error?.code === '23505') throw new ApiError('conflict', 'That code or category slug already exists.');
-  if (error?.code === '23503') throw new ApiError('conflict', 'This item is still in use. Reassign its books or disable the coupon instead.');
-  if (error?.code === 'PGRST116' || error?.code === 'P0002') throw notFound('The requested item no longer exists.');
-  if (error?.code === '22023') throw badRequest(error.message || 'Those details are not valid.');
-  throw new ApiError('upstream_error', 'The database operation failed. Check that the latest migrations have been applied and retry.');
-}
-
-export async function getCategories(): Promise<Category[]> {
-  const { data, error } = await createAdminClient().from('categories').select('*').order('sort_order').order('name');
-  if (error || !data) databaseError(error);
-  return data;
-}
-
+export const databaseError = databaseFailure;
+export async function getCategories(): Promise<Category[]> { return db.query<Category>('SELECT * FROM public.categories ORDER BY sort_order,name'); }
 export async function saveCategory(id: string | undefined, body: z.infer<typeof categorySchema>) {
-  const values = { name: body.name, slug: body.slug, description: body.description ?? null, sort_order: body.sortOrder };
-  const table = createAdminClient().from('categories');
-  const { data, error } = await (id ? table.update(values).eq('id', id) : table.insert(values)).select().single();
-  if (error || !data) databaseError(error);
-  return data;
+  const values = [body.name, body.slug, body.description ?? null, body.sortOrder];
+  const [row] = await db.query<Category>(id ? 'UPDATE public.categories SET name=$1,slug=$2,description=$3,sort_order=$4 WHERE id=$5 RETURNING *' : 'INSERT INTO public.categories(name,slug,description,sort_order) VALUES($1,$2,$3,$4) RETURNING *', id ? [...values, id] : values);
+  if (!row)
+    throw notFound();
+  return row;
 }
-
 export async function deleteCategory(id: string) {
-  const used = await createAdminClient().from('products').select('id', { count: 'exact', head: true }).eq('category_id', id);
-  if (used.error) databaseError(used.error);
-  if (used.count) throw new ApiError('conflict', 'This category is used by books. Reassign those books before deleting it.');
-  const { data, error } = await createAdminClient().from('categories').delete().eq('id', id).select('id').single();
-  if (error || !data) databaseError(error);
+  await transaction(async (sql) => {
+    await sql.query('SELECT id FROM public.categories WHERE id=$1 FOR UPDATE', [id]);
+    if ((await sql.query('SELECT id FROM public.products WHERE category_id=$1 LIMIT 1', [id])).length)
+      throw new ApiError('conflict', 'This category is used by books. Reassign those books before deleting it.');
+    if (!(await sql.query('DELETE FROM public.categories WHERE id=$1 RETURNING id', [id])).length)
+      throw notFound();
+  });
 }
-
-export type ManagedCoupon = Coupon & { product_ids: string[] };
+export type ManagedCoupon = Coupon & {
+  product_ids: string[];
+};
 export async function getCoupons(): Promise<ManagedCoupon[]> {
-  const admin = createAdminClient();
-  const { data, error } = await admin.from('coupons').select('*').order('created_at', { ascending: false });
-  if (error || !data) databaseError(error);
-  const links = await admin.from('coupon_products').select('coupon_id,product_id');
-  if (links.error) databaseError(links.error);
-  return data.map((coupon) => ({ ...coupon, product_ids: [...new Set([...(links.data?.filter((link) => link.coupon_id === coupon.id).map((link) => link.product_id) || []), ...(coupon.product_id ? [coupon.product_id] : [])])] }));
+  return db.query<ManagedCoupon>(`SELECT c.*, ARRAY(SELECT DISTINCT product_id FROM public.coupon_products WHERE coupon_id=c.id UNION SELECT c.product_id WHERE c.product_id IS NOT NULL) AS product_ids FROM public.coupons c ORDER BY created_at DESC`);
 }
-
 export async function saveCoupon(id: string | undefined, body: z.infer<typeof couponUpsertSchema>) {
-  const { data, error } = await createAdminClient().rpc('save_coupon', { p_id: id ?? null, p_coupon: body });
-  if (error || !data) databaseError(error);
-  return data;
+  const [row] = await db.query<{
+    coupon: ManagedCoupon;
+  }>('SELECT public.save_coupon($1,$2::jsonb) AS coupon', [id ?? null, JSON.stringify(body)]);
+  return row!.coupon;
 }
-
-export async function deleteCoupon(id: string) {
-  const { data, error } = await createAdminClient().rpc('delete_coupon', { p_id: id });
-  if (error || !data) databaseError(error);
-}
-
-export async function toggleCoupon(id: string, isActive: boolean) {
-  const { data, error } = await createAdminClient().from('coupons').update({ is_active: isActive }).eq('id', id).select().single();
-  if (error || !data) databaseError(error);
-  return data;
+export async function deleteCoupon(id: string) { await db.query('SELECT public.delete_coupon($1)', [id]); }
+export async function toggleCoupon(id: string, active: boolean) {
+  const [row] = await db.query<Coupon>('UPDATE public.coupons SET is_active=$2 WHERE id=$1 RETURNING *', [id, active]);
+  if (!row)
+    throw notFound();
+  return row;
 }

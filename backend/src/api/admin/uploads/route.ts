@@ -13,11 +13,10 @@ import {
 export const POST = createHandler(
   {
     auth: 'admin',
-    csrf: false,
     rawBody: true,
     rateLimit: { name: 'adminUpload', by: 'user' },
   },
-  async ({ request, log }) => {
+  async ({ request, user, log }) => {
     let formData: FormData;
     try {
       formData = await request.formData();
@@ -28,7 +27,7 @@ export const POST = createHandler(
 
     const file = formData.get('file');
     const purpose = (formData.get('purpose') as UploadPurpose) || 'cover';
-    const productId = (formData.get('productId') as string) || crypto.randomUUID();
+    const productId = purpose === 'avatar' ? user!.id : (formData.get('productId') as string) || crypto.randomUUID();
     if (!['cover', 'main_pdf', 'sample_pdf', 'author_photo', 'avatar'].includes(purpose)) {
       throw badRequest('Unsupported upload purpose.');
     }
@@ -51,9 +50,12 @@ export const POST = createHandler(
 
     // Normalize image contentType if missing
     if (purpose === 'cover' || purpose === 'author_photo' || purpose === 'avatar') {
-      if (!contentType && blob.name?.toLowerCase().endsWith('.png')) contentType = 'image/png';
-      if (!contentType && (blob.name?.toLowerCase().endsWith('.jpg') || blob.name?.toLowerCase().endsWith('.jpeg'))) contentType = 'image/jpeg';
-      if (!contentType && blob.name?.toLowerCase().endsWith('.webp')) contentType = 'image/webp';
+      if (!contentType || contentType === 'application/octet-stream') {
+        if (blob.name?.toLowerCase().endsWith('.png')) contentType = 'image/png';
+        if (blob.name?.toLowerCase().endsWith('.jpg') || blob.name?.toLowerCase().endsWith('.jpeg')) contentType = 'image/jpeg';
+        if (blob.name?.toLowerCase().endsWith('.webp')) contentType = 'image/webp';
+        if (blob.name?.toLowerCase().endsWith('.avif')) contentType = 'image/avif';
+      }
     }
 
     const validationErr = validateUpload(purpose, contentType, contentLength);
@@ -63,6 +65,13 @@ export const POST = createHandler(
 
     const rule = ruleFor(purpose);
     const buffer = Buffer.from(await blob.arrayBuffer());
+    if (purpose === 'avatar') {
+      const matches = contentType === 'image/jpeg' ? buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+        : contentType === 'image/png' ? buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        : contentType === 'image/webp' ? buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP'
+        : buffer.subarray(4, 8).toString() === 'ftyp' && /avif|avis/.test(buffer.subarray(8, 32).toString());
+      if (!matches) throw badRequest('The uploaded photo does not match its image format.');
+    }
     if ((purpose === 'main_pdf' || purpose === 'sample_pdf') && buffer.subarray(0, 5).toString() !== '%PDF-') {
       throw badRequest('The uploaded file is not a PDF document.');
     }
@@ -77,10 +86,10 @@ export const POST = createHandler(
         bucket: rule.bucket,
       });
     } catch (uploadErr: any) {
-      log.error('Storage putObject failed', { purpose, key, error: uploadErr?.message || uploadErr });
+      log.error('Storage putObject failed', { purpose });
       throw new ApiError(
         'upstream_error',
-        `Storage upload failed: ${uploadErr?.message || 'Failed to upload file to storage.'}`,
+        'The file could not be uploaded. Please try again shortly.',
         { status: 502 },
       );
     }

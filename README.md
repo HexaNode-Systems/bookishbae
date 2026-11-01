@@ -1,6 +1,6 @@
 # BookishBae
 
-BookishBae is a premium e-book storefront for author Annu. The repository is split into a Next.js customer/admin frontend and a standalone Node.js API backend. The stack uses Supabase, Cloudinary, Cashfree, and Brevo.
+BookishBae is a premium e-book storefront for author Annu. The repository is split into a Next.js customer/admin frontend and a standalone Node.js API backend. Database operations use direct PostgreSQL (`pg`); Supabase Auth, Cloudinary, Cashfree, and Brevo retain their existing integrations.
 
 ## Repository layout
 
@@ -19,7 +19,7 @@ cp frontend/.env.example frontend/.env.local
 cp backend/.env.example backend/.env.local
 ```
 
-Fill both local files with the same Supabase project values and valid development service credentials. Keep `NODE_ENV=development` only in local files. Start the API and frontend in separate terminals:
+Fill both files with public Supabase project values. Keep `DATABASE_URL`, Auth service-role credentials and integration secrets on the backend. Keep `NODE_ENV=development` only in local files. Start the API and frontend in separate terminals:
 
 ```bash
 npm run dev:backend
@@ -37,13 +37,13 @@ npm run lint
 npm run build
 ```
 
-Backend tests inject isolated fake credentials and point Supabase at a closed loopback port. They do not read `.env.local` or contact production services.
+Backend tests apply all migrations to an isolated PGlite PostgreSQL engine and stub Supabase Auth, storage and Cashfree. They reject PostgREST calls and do not read `.env.local` or contact production services. See [database setup and admin seed](backend/docs/DATABASE.md) for configuration and real PostgreSQL verification.
 
 ## Production deployment checklist
 
 1. Deploy the backend with `NODE_ENV=production`, production Supabase/Cashfree/Cloudinary/Brevo credentials, and the correct `NEXT_PUBLIC_SITE_URL`.
 2. Deploy the frontend with the same public Supabase/site values and `BACKEND_URL=https://<your-api-host>`.
-3. Run `backend/supabase/migrations/0001_schema.sql` through `0006_admin_dashboard_metrics.sql` in order against the intended Supabase project. Review the bootstrap admin email before running migration 0004.
+3. Review and manually apply pending migrations through `0008_direct_postgres_admin.sql` in order. Existing installations apply only unapplied migrations. Configure backend `DATABASE_URL`, then run `npm run db:seed-admin` using private `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` values. Do not edit historical bootstrap email SQL.
 4. Configure the Cashfree webhook at `https://<your-api-host>/api/webhooks/cashfree` and verify the Brevo sender domain.
 5. Run the SQL security suite against a disposable database, then complete sandbox checkout, webhook replay, refund, and download tests before enabling live Cashfree credentials.
 6. Set monitoring/alerts for API 5xx responses, webhook failures, payment mismatches, and database availability. The application intentionally fails closed in production when its database is unavailable.

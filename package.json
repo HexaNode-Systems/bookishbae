@@ -22,7 +22,8 @@
     "test:database": "node backend/tests/run-postgres-tests.mjs",
     "typecheck": "npm run typecheck --workspace=frontend && npm run typecheck --workspace=backend",
     "lint": "npm run lint --workspace=frontend",
-    "seed": "npm run seed --workspace=backend"
+    "seed": "npm run seed --workspace=backend",
+    "db:seed-admin": "npm run db:seed-admin --workspace=backend"
   },
   "dependencies": {
     "@getbrevo/brevo": "^6.2.0",

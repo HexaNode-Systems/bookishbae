@@ -1,3 +1,4 @@
+import { db } from '../src/lib/db/postgres';
 import assert from 'node:assert';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
@@ -23,9 +24,10 @@ import * as downloadRoute from '../src/api/download/route';
 import * as couponRoute from '../src/api/coupons/validate/route';
 import * as newsletterRoute from '../src/api/newsletter/route';
 
+import { getPool } from '../src/lib/db/postgres';
 import { env } from '../src/lib/env';
 import { SEED_BOOK_IDS } from '../src/lib/db/repository';
-import { createProduct, updateProduct, getProductByIdOrSlug } from '../src/lib/db/repository';
+import { createProduct, updateProduct, getProductByIdOrSlug, markOrderPaid } from '../src/lib/db/repository';
 import { publicUrl } from '../src/lib/cloudinary';
 import { storedObjects } from './storage-fixture';
 import { setGatewayPaid } from './payment-fixture';
@@ -55,7 +57,7 @@ function makeReq(
   });
 
   if (options.role && options.role !== 'none') {
-    headers.set('x-test-role', options.role);
+    headers.set('authorization', `Bearer fixture-${options.role}-token`);
   }
 
   return new NextRequest(url, {
@@ -547,6 +549,8 @@ test('Order Management: refund marks order as refunded', async () => {
   );
   const checkoutData = await checkoutRes.json();
 
+  await markOrderPaid(checkoutData.orderId, { paymentId: `fixture-refund-${checkoutData.orderId}`, amountPaise: checkoutData.amountPaise });
+
   const refundReq = makeReq('http://localhost:3000/api/admin/orders/refund', {
     role: 'admin',
     body: { orderId: checkoutData.orderId, reason: 'Customer requested refund' },
@@ -771,7 +775,7 @@ function makeMultipartReq(
     'x-dev-admin': 'true',
   });
   if (role !== 'none') {
-    headers.set('x-test-role', role);
+    headers.set('authorization', `Bearer fixture-${role}-token`);
   }
   return new NextRequest(url, {
     method: 'POST',
@@ -888,26 +892,6 @@ test('Cover URL Mapping: publicUrl properly resolves local seed covers, relative
 });
 
 test('New book: uploaded cover and separate sample persist through database reads and return real PDF bytes', async (t) => {
-  const originalFetch = globalThis.fetch;
-  const rows = new Map<string, any>();
-  let databaseReads = 0;
-  t.mock.method(globalThis, 'fetch', async (input: any, init: any) => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.pathname !== '/rest/v1/products') return originalFetch(input, init);
-    const method = init?.method || 'GET';
-    const headers = { 'content-type': 'application/json', 'content-range': `0-0/${rows.size}` };
-    if (method === 'POST') {
-      const row = JSON.parse(init.body);
-      rows.set(row.id, row);
-      return new Response(JSON.stringify(row), { status: 201, headers });
-    }
-    databaseReads++;
-    const row = [...rows.values()].find((row) =>
-      (!url.searchParams.has('id') || url.searchParams.get('id') === `eq.${row.id}`) &&
-      (!url.searchParams.has('slug') || url.searchParams.get('slug') === `eq.${row.slug}`));
-    return new Response(JSON.stringify(new Headers(init?.headers).get('accept')?.includes('vnd.pgrst.object') ? row : [...rows.values()]), { headers });
-  });
-
   const upload = async (purpose: string, bytes: Buffer, mime: string) => {
     const form = new FormData();
     form.set('purpose', purpose);
@@ -929,10 +913,11 @@ test('New book: uploaded cover and separate sample persist through database read
   }));
   assert.strictEqual(created.status, 200);
   const { product } = await created.json();
-  assert.strictEqual(rows.get(product.id).cover_key, cover.key);
-  assert.strictEqual(rows.get(product.id).sample_pdf_key, sample.key);
-  assert.strictEqual(rows.get(product.id).main_pdf_key, full.key);
-  assert.strictEqual(rows.get(product.id).cover_url, undefined, 'URL is derived from the persisted key, not a transient database field');
+  const [persisted] = await db.query('SELECT * FROM public.products WHERE id=$1',[product.id]);
+  assert.strictEqual(persisted!.cover_key,cover.key);
+  assert.strictEqual(persisted!.sample_pdf_key,sample.key);
+  assert.strictEqual(persisted!.main_pdf_key,full.key);
+  assert.strictEqual(persisted!.cover_url,undefined);
   for (const read of [
     () => adminProductDetailRoute.GET(makeReq(`http://localhost:3000/api/admin/products/${product.id}`, { role: 'admin' }), { params: { id: product.id } }),
     () => productSlugRoute.GET(makeReq(`http://localhost:3000/api/products/${slug}`), { params: { slug } }),
@@ -948,7 +933,6 @@ test('New book: uploaded cover and separate sample persist through database read
   const listed = (await list.json()).products.find((p: any) => p.id === product.id);
   assert.strictEqual(listed.cover_url, cover.url);
   assert.strictEqual(listed.main_pdf_key, undefined);
-  assert.ok(databaseReads >= 3, 'The regression must exercise database reads, not only fixture fallback');
   const downloaded = await downloadRoute.POST(makeReq('http://localhost:3000/api/download', { body: { productId: product.id, kind: 'sample' } }));
   assert.strictEqual(downloaded.status, 200);
   assert.strictEqual(downloaded.headers.get('content-type'), 'application/pdf');
@@ -1004,13 +988,14 @@ test('Checkout: accepts real phone numbers and rejects incomplete customer detai
   }
 });
 
-test('Database outages: development must not report a successful book save or start checkout from fixture data', async () => {
+test('Database outages: development must not report a successful book save or start checkout from fixture data', async t => {
   const originalMode = env.NODE_ENV;
+  t.mock.method(getPool(), 'query', async () => { throw new Error('offline'); });
   try {
     env.NODE_ENV = 'development';
-    await assert.rejects(createProduct({ title: 'Unsaved book', slug: 'unsaved-book' }), /could not be saved to the database/);
-    await assert.rejects(updateProduct(LONG_AFTERNOON_ID, { title: 'Unsaved title' }), /could not be saved to the database/);
-    await assert.rejects(getProductByIdOrSlug(LONG_AFTERNOON_ID, true, true), /Checkout is temporarily unavailable/);
+    await assert.rejects(createProduct({ title: 'Unsaved book', slug: 'unsaved-book' }), /database is unavailable/);
+    await assert.rejects(updateProduct(LONG_AFTERNOON_ID, { title: 'Unsaved title' }), /database is unavailable/);
+    await assert.rejects(getProductByIdOrSlug(LONG_AFTERNOON_ID, true, true), /database is unavailable/);
   } finally {
     env.NODE_ENV = originalMode;
   }

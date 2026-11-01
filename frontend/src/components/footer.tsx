@@ -1,6 +1,13 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowUpRight, Mail } from 'lucide-react';
+import { ArrowUpRight, Facebook, Instagram, Mail, Youtube } from 'lucide-react';
+
+// Placeholder social URLs: replace these with BookishBae's actual profiles.
+const socialLinks = [
+  { name: 'Instagram', href: 'https://instagram.com/your-handle', Icon: Instagram },
+  { name: 'Facebook', href: 'https://facebook.com/your-page', Icon: Facebook },
+  { name: 'YouTube', href: 'https://youtube.com/@your-channel', Icon: Youtube },
+];
 
 export function Footer() {
   return (
@@ -38,10 +45,24 @@ export function Footer() {
               <br />
               We’re an email away.
             </p>
-            <a className="footer-email" href="mailto:admin@appnix.info">
-              <Mail size={16} aria-hidden="true" /> admin@appnix.info{' '}
+            <a className="footer-email" href="mailto:annuy0635@gmail.com">
+              <Mail size={16} aria-hidden="true" /> annuy0635@gmail.com{' '}
               <ArrowUpRight size={14} aria-hidden="true" />
             </a>
+            <div className="footer-socials" role="group" aria-label="Follow BookishBae">
+              {socialLinks.map(({ name, href, Icon }) => (
+                <a
+                  key={name}
+                  href={href}
+                  aria-label={`${name} (opens in a new tab)`}
+                  title={name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Icon size={18} aria-hidden="true" />
+                </a>
+              ))}
+            </div>
           </div>
         </div>
         <div className="footer-bottom">
@@ -58,15 +79,6 @@ export function Footer() {
               rel="noopener noreferrer"
             >
               Appnix Technologies
-              <span className="sr-only"> (opens in a new tab)</span>
-            </a>
-            {' · '}
-            <a
-              href="https://www.appnix.org"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              www.appnix.org
               <span className="sr-only"> (opens in a new tab)</span>
             </a>
           </p>

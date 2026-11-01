@@ -783,17 +783,9 @@ async function upload(artefacts: Artefacts[]) {
   // Imported here rather than at the top so that `--dry-run` works with no
   // credentials configured at all.
   const { putObject, PRIVATE_BUCKET, PUBLIC_BUCKET } = await import('../src/lib/cloudinary');
-  const { createAdminClient } = await import('../src/lib/supabase/admin');
+  const { db, transaction } = await import('../src/lib/db/postgres');
   const { env } = await import('../src/lib/env');
-
-  const supabase = createAdminClient();
-
-  const { data: categories, error: catError } = await supabase
-    .from('categories')
-    .select('id, slug');
-
-  if (catError) throw new Error(`Could not read categories: ${catError.message}`);
-
+  const categories = await db.query<{ id: string; slug: string }>('SELECT id,slug FROM public.categories');
   const categoryIdBySlug = new Map((categories ?? []).map((c) => [c.slug, c.id]));
 
   for (const { book, coverPng, fullPdf, fullPages, samplePdf } of artefacts) {
@@ -831,10 +823,8 @@ async function upload(artefacts: Artefacts[]) {
 
     const sha256 = createHash('sha256').update(fullPdf).digest('hex');
 
-    const { data: product, error } = await supabase
-      .from('products')
-      .upsert(
-        {
+    const product = await transaction(async sql => {
+      const values = {
           slug: book.slug,
           title: book.title,
           subtitle: book.subtitle,
@@ -862,51 +852,23 @@ async function upload(artefacts: Artefacts[]) {
           meta_title: `${book.title} by Annu`,
           meta_description: book.excerpt.slice(0, 160),
           published_at: new Date().toISOString(),
-        },
-        { onConflict: 'slug' },
-      )
-      .select('id, slug')
-      .single();
-
-    if (error) throw new Error(`Could not upsert ${book.slug}: ${error.message}`);
+        };
+      const columns = Object.keys(values);
+      const [saved] = await sql.query<{ id: string; slug: string }>(`INSERT INTO public.products(${columns.join(',')}) VALUES(${columns.map((_,i)=>`$${i+1}`).join(',')}) ON CONFLICT(slug) DO UPDATE SET ${columns.filter(c=>c!=='slug').map(c=>`${c}=excluded.${c}`).join(',')} RETURNING id,slug`,Object.values(values));
+      if (!saved) throw new Error('Catalogue seed could not save the product.');
+      await sql.query('DELETE FROM public.reviews WHERE product_id=$1 AND user_id IS NULL',[saved.id]);
+      for (const review of book.reviews) await sql.query(`INSERT INTO public.reviews(product_id,user_id,author_name,rating,title,body,status,is_verified_purchase) VALUES($1,NULL,$2,$3,$4,$5,'approved',false)`,[saved.id,review.authorName,review.rating,review.title,review.body]);
+      return saved;
+    });
     console.log(`  row    -> products/${product.slug}`);
 
-    // Reviews are inserted with a null user_id: they are seed content, not real
-    // purchases, so is_verified_purchase stays false and the unique
-    // (product_id, user_id) constraint permits several NULL rows.
-    await supabase.from('reviews').delete().eq('product_id', product.id).is('user_id', null);
-
-    const { error: reviewError } = await supabase.from('reviews').insert(
-      book.reviews.map((review) => ({
-        product_id: product.id,
-        user_id: null,
-        author_name: review.authorName,
-        rating: review.rating,
-        title: review.title,
-        body: review.body,
-        status: 'approved' as const,
-        is_verified_purchase: false,
-      })),
-    );
-
-    if (reviewError) throw new Error(`Could not insert reviews for ${book.slug}: ${reviewError.message}`);
     console.log(`  reviews-> ${book.reviews.length} approved`);
   }
 
   // The hero needs something to feature.
   const featured = BOOKS.find((b) => b.isFeatured);
   if (featured) {
-    const { data: hero } = await supabase
-      .from('site_settings')
-      .select('value')
-      .eq('key', 'hero')
-      .single();
-
-    const current = (hero?.value ?? {}) as Record<string, unknown>;
-    await supabase
-      .from('site_settings')
-      .update({ value: { ...current, featured_product_slug: featured.slug } })
-      .eq('key', 'hero');
+    await db.query(`UPDATE public.site_settings SET value=value || jsonb_build_object('featured_product_slug',$1::text) WHERE key='hero'`,[featured.slug]);
 
     console.log(`\nHero now features "${featured.title}".`);
   }
@@ -936,7 +898,7 @@ async function main() {
   console.log('\nDone. Three titles are live.\n');
 }
 
-main().catch((error: unknown) => {
-  console.error('\nSeed failed:', error instanceof Error ? error.message : error);
+main().catch(() => {
+  console.error('Catalogue seed failed. Check backend configuration and database connectivity.');
   process.exitCode = 1;
-});
+}).finally(async () => { const { closeDatabase } = await import('../src/lib/db/postgres'); await closeDatabase(); });

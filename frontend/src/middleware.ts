@@ -10,7 +10,8 @@
  * Step 3 is a convenience, not the security boundary. The real checks live next
  * to the data: `requireAdmin()` on the page and `auth: 'admin'` on the route
  * handler, both of which read the role from Postgres. Middleware can be
- * bypassed by a misconfigured matcher; RLS cannot.
+ * bypassed by a misconfigured matcher; backend authorization must always run
+ * because the PostgreSQL connection may bypass RLS.
  *
  * API routes are excluded from the matcher — they manage their own cookies and
  * send their own headers, and payment webhooks must reach the handler with

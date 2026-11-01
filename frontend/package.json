@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --import tsx --test tests/store-flows.test.tsx tests/checkout-security.test.ts",
+    "test": "node --import tsx --test tests/store-flows.test.tsx tests/checkout-security.test.ts tests/admin-profile.test.tsx",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -51,10 +51,12 @@
     "@types/node": "^20.17.11",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/react-test-renderer": "^18.3.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.21",
     "postcss": "^8.4.49",
+    "react-test-renderer": "^18.3.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2"
   }

@@ -3,11 +3,12 @@
  *
  * Two rules govern this module:
  *
- *   1. Sending email never fails the request that triggered it. A buyer who has
+ *   1. A provider failure does not fail the request that triggered it. A buyer who has
  *      paid must land on their download page whether or not our mail provider
  *      is having an outage — the book is already in their library, and the
  *      email is a convenience. So `sendEmail` resolves rather than throws, and
- *      reports what happened in its return value.
+ *      reports what happened in its return value. Database audit failures still
+ *      propagate, so a missing database is never reported as a successful write.
  *
  *   2. Every attempt is recorded in `public.email_log`, including failures.
  *      When a buyer says "I never got it", that table is the answer.
@@ -17,7 +18,7 @@ import { BrevoClient } from '@getbrevo/brevo';
 
 import { env } from './env';
 import { logger } from './logger';
-import { createAdminClient } from './supabase/admin';
+import { db } from './db/postgres';
 
 let client: BrevoClient | null = null;
 
@@ -115,22 +116,9 @@ async function recordEmail(entry: {
   orderId: string | null;
   result: SendEmailResult;
 }): Promise<void> {
-  try {
-    await createAdminClient()
-      .from('email_log')
-      .insert({
-        to_email: entry.to,
-        template: entry.template,
-        subject: entry.subject.slice(0, 200),
-        provider_id: entry.result.providerId ?? null,
-        order_id: entry.orderId,
-        status: entry.result.sent ? 'sent' : 'failed',
-        error: entry.result.error?.slice(0, 500) ?? null,
-      });
-  } catch (error) {
-    // The log is for us, not the buyer. A failure here is worth a line and nothing more.
-    logger.warn('Could not write email_log row', { error });
-  }
+  await db.query(`INSERT INTO public.email_log(to_email,template,subject,provider_id,order_id,status,error)
+      VALUES($1,$2,$3,$4,$5,$6,$7)`, [entry.to,entry.template,entry.subject.slice(0,200),entry.result.providerId ?? null,
+      entry.orderId,entry.result.sent ? 'sent' : 'failed',entry.result.error?.slice(0,500) ?? null]);
 }
 
 // ---------------------------------------------------------------------------

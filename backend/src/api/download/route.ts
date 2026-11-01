@@ -30,6 +30,7 @@ export const POST = createHandler(
 
     // 2. Sample download flow (Public: anyone can download free opening samples)
     if (body.kind === 'sample') {
+      if (product.status !== 'published') throw notFound('Book not found.');
       const filename = downloadFilename(product.title, 'sample');
       let bytes: Uint8Array;
       try {
@@ -82,6 +83,8 @@ export const POST = createHandler(
           }
         }
       } else if (body.orderId) {
+        // Sequential order numbers and gateway references are not guest credentials.
+        if (!/^[0-9a-f-]{36}$/i.test(body.orderId)) throw unauthenticated();
         const verifiedOrder = await getOrderById(body.orderId);
         if (verifiedOrder && verifiedOrder.status === 'paid') {
           claimTarget = verifiedOrder.email || verifiedOrder.id;
@@ -182,7 +185,8 @@ export const POST = createHandler(
       });
 
       log.error('Failed to generate presigned download URL', presignError);
-      throw forbidden('Could not generate download link. Please try again shortly.');
+      if (presignError instanceof ApiError) throw presignError;
+      throw new ApiError('upstream_error', 'Could not generate download link. Please try again shortly.');
     }
   },
 );

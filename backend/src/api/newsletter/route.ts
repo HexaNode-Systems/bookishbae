@@ -1,3 +1,4 @@
+import { db } from '@/lib/db/postgres';
 import { createHandler } from '@/lib/api/handler';
 import { emailShell, sendEmail } from '@/lib/brevo';
 import { env } from '@/lib/env';
@@ -9,17 +10,10 @@ export const POST = createHandler(
     body: newsletterSubscribeSchema,
     rateLimit: { name: 'newsletter', by: 'ip' },
   },
-  async ({ body, admin, log }) => {
+  async ({ body, log }) => {
     const email = body.email.trim().toLowerCase();
 
-    try {
-      await admin()
-        .from('profiles')
-        .update({ marketing_opt_in: true })
-        .eq('email', email);
-    } catch {
-      // Ignored
-    }
+    await db.query('UPDATE public.profiles SET marketing_opt_in=true WHERE email=$1', [email]);
 
     log.info('Newsletter subscriber recorded', { email });
 

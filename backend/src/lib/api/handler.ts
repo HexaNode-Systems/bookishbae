@@ -12,7 +12,7 @@
  *       body: downloadRequestSchema,
  *       rateLimit: { name: 'download', by: 'user' },
  *     },
- *     async ({ body, user, admin, log }) => { ... },
+ *     async ({ body, user, log }) => { ... },
  *   );
  *
  * `auth` is required, with no default. A route that genuinely is public has to
@@ -25,9 +25,9 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { env } from '../env';
 import { ZodError, type ZodType, type z } from 'zod';
 
-import { env } from '@/lib/env';
 import { logger, type Logger } from '@/lib/logger';
 import { allowedOrigins, clientIp, hashIp, isSameOriginRequest, requestId, userAgent } from '@/lib/net';
 import {
@@ -37,9 +37,9 @@ import {
   type RateLimitName,
   type RateLimitRule,
 } from '@/lib/rate-limit';
-import { createAdminClient, type AdminClient } from '@/lib/supabase/admin';
 import { createClient as createServerSupabase } from '@/lib/supabase/server';
 import type { Profile, UserRole } from '@/types/database';
+import { getProfile } from '../db/profiles';
 
 import { ApiError, forbidden, internalError, isApiError, rateLimited, unauthenticated } from './errors';
 
@@ -83,10 +83,8 @@ export interface HandlerContext<TBody, TQuery> {
   params: Record<string, string>;
   body: TBody;
   query: TQuery;
-  /** RLS-scoped client. Prefer this. */
+  /** Supabase Auth only. Database access belongs in PostgreSQL repositories. */
   supabase: ReturnType<typeof createServerSupabase>;
-  /** Service-role client, created on first call. Bypasses RLS — be deliberate. */
-  admin: () => AdminClient;
   user: { id: string; email: string | null } | null;
   profile: Profile | null;
   role: UserRole | null;
@@ -121,8 +119,6 @@ export function createHandler<
       path: new URL(request.url).pathname,
     });
 
-    let adminClient: AdminClient | null = null;
-    const getAdmin = () => (adminClient ??= createAdminClient());
 
     try {
       // --- Method -------------------------------------------------------
@@ -165,63 +161,16 @@ export function createHandler<
           }
         }
 
-        // Test mode support: test headers allowed strictly when NODE_ENV === 'test'
-        if (!authUser && process.env.NODE_ENV === 'test') {
-          const testRole = request.headers.get('x-test-role');
-          if (testRole === 'admin' || testRole === 'customer') {
-            authUser = {
-              id: testRole === 'admin' ? 'test-admin-id' : 'test-customer-id',
-              email: testRole === 'admin' ? 'admin@bookishbae.com' : 'buyer@example.com',
-            };
-            profile = {
-              id: authUser.id,
-              email: authUser.email!,
-              full_name: testRole === 'admin' ? 'Admin User' : 'Test Buyer',
-              avatar_url: null,
-              phone: null,
-              role: testRole as UserRole,
-              marketing_opt_in: false,
-              notes: null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-          }
-        }
-
-        // Development preview session support
-        if (!authUser && env.NODE_ENV === 'development') {
-          const devPreview =
-            request.headers.get('x-dev-admin') === 'true' ||
-            request.cookies.get('bb_dev_admin')?.value === 'true';
-          if (devPreview) {
-            authUser = { id: 'dev-admin-id', email: 'admin@appnix.info' };
-            profile = {
-              id: 'dev-admin-id',
-              email: 'admin@appnix.info',
-              full_name: 'Annu (Admin)',
-              avatar_url: null,
-              phone: null,
-              role: 'admin' as UserRole,
-              marketing_opt_in: false,
-              notes: null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-          }
-        }
-
         if (!authUser) throw unauthenticated();
 
         user = { id: authUser.id, email: authUser.email ?? null };
 
         if (!profile) {
-          const { data: profileRow } = await supabase
-            .from('profiles')
-            .select('id, email, full_name, avatar_url, phone, role, marketing_opt_in, created_at, updated_at')
-            .eq('id', authUser.id)
-            .single();
-
-          profile = (profileRow as Profile | null) ?? null;
+          const stored = await getProfile(authUser.id);
+          if (stored) {
+            const { is_admin, ...safe } = stored;
+            profile = { ...safe, role: is_admin ? 'admin' : 'customer' } as Profile;
+          }
         }
 
         if (config.auth === 'admin') {
@@ -244,16 +193,6 @@ export function createHandler<
         if (!authUser) {
           const { data } = await supabase.auth.getUser();
           if (data?.user) authUser = data.user;
-        }
-
-        if (!authUser && process.env.NODE_ENV === 'test') {
-          const testRole = request.headers.get('x-test-role');
-          if (testRole === 'admin' || testRole === 'customer') {
-            authUser = {
-              id: testRole === 'admin' ? 'test-admin-id' : 'test-customer-id',
-              email: testRole === 'admin' ? 'admin@bookishbae.com' : 'buyer@example.com',
-            };
-          }
         }
 
         if (authUser) user = { id: authUser.id, email: authUser.email ?? null };
@@ -351,7 +290,6 @@ export function createHandler<
         body: body as Infer<TBody>,
         query: query as Infer<TQuery>,
         supabase,
-        admin: getAdmin,
         user,
         profile,
         role: profile?.role ?? null,

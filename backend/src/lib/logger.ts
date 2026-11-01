@@ -16,7 +16,7 @@ type Level = 'debug' | 'info' | 'warn' | 'error';
 
 /** Keys whose values are replaced wholesale, whatever they contain. */
 const SECRET_KEY_PATTERN =
-  /(secret|token|password|passwd|authorization|auth|apikey|api_key|signature|cookie|session|jwt|service_role|private_key|access_key|card|cvv|otp)/i;
+  /(database_url|connectionstring|secret|token|password|passwd|authorization|auth|apikey|api_key|signature|cookie|session|jwt|service_role|private_key|access_key|card|cvv|otp)/i;
 
 /** Keys that hold an email address and should be partially masked, not removed. */
 const EMAIL_KEY_PATTERN = /(email|to_email|from|reply_to|recipient)/i;
@@ -37,6 +37,7 @@ export function maskEmail(value: string): string {
 
 function redactString(value: string): string {
   return value
+    .replace(/postgres(?:ql)?:\/\/[^\s\"\']+/gi, '[redacted-database-url]')
     .slice(0, MAX_STRING)
     .replace(EMAIL_IN_TEXT, (_m, first: string, domain: string) => `${first}***@${domain}***`)
     .replace(LONG_DIGIT_RUN, '[redacted-number]');
@@ -58,7 +59,7 @@ function redact(value: unknown, depth = 0): unknown {
       message: redactString(value.message),
       // Stacks carry file paths and sometimes inlined values. Keep them in
       // development, where they are useful, and drop them in production.
-      ...(process.env.NODE_ENV === 'production' ? {} : { stack: value.stack }),
+      ...(process.env.NODE_ENV === 'production' ? {} : { stack: redactString(value.stack ?? '') }),
     };
   }
 
@@ -96,7 +97,7 @@ function emit(level: Level, message: string, context?: LogContext): void {
     const line = JSON.stringify({
       level,
       ts: new Date().toISOString(),
-      msg: message,
+      msg: redactString(message),
       ...safe,
     });
     if (level === 'error') console.error(line);
@@ -105,7 +106,7 @@ function emit(level: Level, message: string, context?: LogContext): void {
     return;
   }
 
-  const prefix = `[${level}] ${message}`;
+  const prefix = `[${level}] ${redactString(message)}`;
   if (level === 'error') console.error(prefix, safe ?? '');
   else if (level === 'warn') console.warn(prefix, safe ?? '');
   else console.log(prefix, safe ?? '');

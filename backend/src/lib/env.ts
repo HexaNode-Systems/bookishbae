@@ -17,21 +17,6 @@ if (typeof window !== 'undefined') {
   );
 }
 
-/** Comma-separated list -> trimmed, lowercased, de-duplicated array. */
-const csvLower = z
-  .string()
-  .optional()
-  .transform((value) =>
-    Array.from(
-      new Set(
-        (value ?? '')
-          .split(',')
-          .map((part) => part.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    ),
-  );
-
 /** "true"/"1"/"yes" -> true, with a default. */
 const boolish = (fallback: boolean) =>
   z
@@ -74,6 +59,8 @@ const schema = z.object({
    * a client bundle, rotate it immediately.
    */
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required on the backend'),
+  DATABASE_SSL_MODE: z.enum(['verify-full', 'disable']).default('verify-full'),
 
   // --- Cloudinary ---------------------------------------------------------
   CLOUDINARY_CLOUD_NAME: z.string().min(1),
@@ -92,8 +79,6 @@ const schema = z.object({
   EMAIL_REPLY_TO: z.string().email().optional(),
 
   // --- Operational knobs --------------------------------------------------
-  /** Emails that become admin on first sign-in. Also settable in site_settings. */
-  ADMIN_BOOTSTRAP_EMAILS: csvLower,
   /**
    * Lifetime of a presigned download URL. Short on purpose: long enough to
    * survive a slow mobile connection, short enough that a leaked link is dead

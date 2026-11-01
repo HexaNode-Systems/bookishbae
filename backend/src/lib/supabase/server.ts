@@ -1,10 +1,4 @@
-/**
- * Server Supabase client, scoped to the signed-in user.
- *
- * Use this for anything that should obey RLS — which is almost everything on
- * the read path, including admin screens. Reach for `@/lib/supabase/admin`
- * only when the operation genuinely has to see across users.
- */
+/** Supabase Auth/session client. Database operations use backend PostgreSQL repositories. */
 
 import { cookies } from 'next/headers';
 

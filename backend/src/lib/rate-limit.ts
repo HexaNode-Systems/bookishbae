@@ -1,18 +1,6 @@
-/**
- * Rate limiting on Postgres with in-memory fallback.
- *
- * The spec allows "Upstash or Supabase-based" and this is the Supabase one:
- * a single fixed-window upsert through `public.consume_rate_limit`. That means
- * one fewer service to provision before launch and one fewer secret to rotate.
- *
- * When Postgres is unavailable or the function is not yet migrated, an in-memory
- * fixed window limiter safely steps in so that the store stays protected and
- * rate limits are strictly enforced.
- */
-
+/** PostgreSQL fixed-window rate limiting. Database failures fail closed. */
 import { env } from './env';
-import { logger } from './logger';
-import { createAdminClient } from './supabase/admin';
+import { db } from './db/postgres';
 
 export interface RateLimitRule {
   /** Requests permitted per window. */
@@ -53,43 +41,7 @@ export const RATE_LIMITS = {
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
 
-// In-memory fallback buckets when Postgres consume_rate_limit is not yet available
-const memoryBuckets = new Map<string, { count: number; resetAt: number }>();
-
-function memoryRateLimit(bucket: string, rule: RateLimitRule): RateLimitResult {
-  const now = Date.now();
-  const existing = memoryBuckets.get(bucket);
-
-  if (!existing || existing.resetAt <= now) {
-    const resetAt = now + rule.windowSeconds * 1000;
-    memoryBuckets.set(bucket, { count: 1, resetAt });
-    return {
-      allowed: true,
-      limit: rule.limit,
-      used: 1,
-      remaining: Math.max(0, rule.limit - 1),
-      resetAt: new Date(resetAt).toISOString(),
-      retryAfter: rule.windowSeconds,
-      degraded: true,
-    };
-  }
-
-  existing.count += 1;
-  const allowed = existing.count <= rule.limit;
-  const remaining = Math.max(0, rule.limit - existing.count);
-  const retryAfter = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
-
-  return {
-    allowed,
-    limit: rule.limit,
-    used: existing.count,
-    remaining,
-    resetAt: new Date(existing.resetAt).toISOString(),
-    retryAfter,
-    degraded: true,
-  };
-}
-
+// Explicitly disabled limiting is a configuration choice, never an outage fallback.
 function fallback(rule: RateLimitRule, allowed: boolean): RateLimitResult {
   return {
     allowed,
@@ -108,38 +60,12 @@ function fallback(rule: RateLimitRule, allowed: boolean): RateLimitResult {
 export async function rateLimit(bucket: string, rule: RateLimitRule): Promise<RateLimitResult> {
   if (!env.RATE_LIMIT_ENABLED) return fallback(rule, true);
 
-  try {
-    const supabase = createAdminClient();
-    const { data, error } = await supabase.rpc('consume_rate_limit', {
-      p_bucket: bucket.slice(0, 200),
-      p_limit: rule.limit,
-      p_window_seconds: rule.windowSeconds,
-    });
-
-    if (error) throw new Error(error.message);
-
-    const row = Array.isArray(data) ? data[0] : null;
-    if (!row) throw new Error('consume_rate_limit returned no row');
-
-    const resetAt = new Date(row.reset_at);
-    const retryAfter = Math.max(1, Math.ceil((resetAt.getTime() - Date.now()) / 1000));
-
-    return {
-      allowed: row.allowed,
-      limit: rule.limit,
-      used: row.used,
-      remaining: row.remaining,
-      resetAt: resetAt.toISOString(),
-      retryAfter,
-    };
-  } catch (error) {
-    logger.warn('Postgres rate limiter unavailable, falling back to in-memory rate limiting', {
-      bucket,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // Fall back to genuine in-memory rate limiting with the exact same limits
-    return memoryRateLimit(bucket, rule);
-  }
+  const [row] = await db.query<{ allowed: boolean; used: number; remaining: number; reset_at: string }>(
+    'SELECT * FROM public.consume_rate_limit($1,$2,$3)', [bucket.slice(0, 200), rule.limit, rule.windowSeconds]);
+  if (!row) throw new Error('Database did not return the rate limit counter.');
+  const resetAt = new Date(row.reset_at);
+  return { allowed: row.allowed, limit: rule.limit, used: row.used, remaining: row.remaining,
+    resetAt: resetAt.toISOString(), retryAfter: Math.max(1, Math.ceil((resetAt.getTime()-Date.now())/1000)) };
 }
 
 /** Named-rule convenience wrapper. */

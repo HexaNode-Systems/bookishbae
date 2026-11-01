@@ -1,3 +1,5 @@
+import { db } from '../src/lib/db/postgres';
+import { SEED_BOOK_IDS } from '../src/lib/db/repository';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
@@ -20,7 +22,7 @@ import { createHmac } from 'node:crypto';
 import * as webhook from '../src/api/webhooks/cashfree/route';
 
 const request = (path: string, method = 'GET', body?: unknown, role = 'admin') => new NextRequest(`http://localhost:3000${path}`, {
-  method, headers: { origin: 'http://localhost:3000', 'content-type': 'application/json', 'x-test-role': role },
+  method, headers: { origin: 'http://localhost:3000', 'content-type': 'application/json', authorization: `Bearer fixture-${role}-token` },
   ...(body ? { body: JSON.stringify(body) } : {}),
 });
 
@@ -35,26 +37,6 @@ test('Category and coupon administration refuses unauthenticated and customer re
 });
 
 test('Author category CRUD, ID filtering and preview persistence survive fresh API reads without demo content', async t => {
-  const originalFetch = globalThis.fetch;
-  const categoryRows = new Map<string, any>();
-  const bookRows = new Map<string, any>();
-  t.mock.method(globalThis, 'fetch', async (input: any, init: any) => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    const isCategories = url.pathname === '/rest/v1/categories';
-    if (!isCategories && url.pathname !== '/rest/v1/products') return originalFetch(input, init);
-    const rows = isCategories ? categoryRows : bookRows;
-    const method = init?.method || 'GET';
-    const id = url.searchParams.get('id')?.replace(/^eq\./, '');
-    const selected = [...rows.values()].filter(row => (!id || row.id === id) &&
-      (!url.searchParams.has('category_id') || `eq.${row.category_id}` === url.searchParams.get('category_id')) &&
-      (!url.searchParams.has('slug') || `eq.${row.slug}` === url.searchParams.get('slug')));
-    if (method === 'HEAD') return new Response(null, { headers: { 'content-range': `0-0/${selected.length}` } });
-    let row = selected[0];
-    if (method === 'POST') { row = { id: crypto.randomUUID(), ...JSON.parse(init.body) }; rows.set(row.id, row); }
-    if (method === 'PATCH') { row = { ...row, ...JSON.parse(init.body) }; rows.set(row.id, row); }
-    if (method === 'DELETE' && id) rows.delete(id);
-    return Response.json(new Headers(init?.headers).get('accept')?.includes('vnd.pgrst.object') ? row : selected, { headers: { 'content-range': `0-0/${selected.length}` } });
-  });
   const categoryResponse = await categories.POST(request('/api/admin/categories', 'POST', { name: 'Author mysteries', slug: 'author-mysteries' }));
   assert.equal(categoryResponse.status, 200);
   const savedCategory = (await categoryResponse.json()).category;
@@ -65,8 +47,8 @@ test('Author category CRUD, ID filtering and preview persistence survive fresh A
   }));
   assert.equal(created.status, 200);
   const savedBook = (await created.json()).product;
-  assert.equal(bookRows.get(savedBook.id).category_id, savedCategory.id);
-  assert.deepEqual(bookRows.get(savedBook.id).sample_preview, preview);
+  assert.equal((await db.query('SELECT category_id FROM public.products WHERE id=$1',[savedBook.id]))[0]!.category_id, savedCategory.id);
+  assert.deepEqual((await db.query('SELECT sample_preview FROM public.products WHERE id=$1',[savedBook.id]))[0]!.sample_preview, preview);
   const filtered = await publicProducts.GET(request('/api/products?category=author-mysteries'));
   assert.deepEqual((await filtered.json()).products.map((book: any) => book.id), [savedBook.id]);
   const empty = await publicProducts.GET(request('/api/products?category=absent-category'));
@@ -81,50 +63,31 @@ test('Author category CRUD, ID filtering and preview persistence survive fresh A
   assert.equal(changed.status, 200);
   assert.deepEqual((await changed.json()).product.sample_preview, []);
   assert.equal((await category.DELETE(request(`/api/admin/categories/${savedCategory.id}`, 'DELETE'), { params: { id: savedCategory.id } })).status, 200);
-  assert.deepEqual((await (await publicCategories.GET(request('/api/categories'))).json()).categories, []);
+  assert.equal((await (await publicCategories.GET(request('/api/categories'))).json()).categories.some((c:any)=>c.id===savedCategory.id), false);
 });
 
 test('Coupon create/edit/toggle/delete preserve book scope and dates; malformed discounts are rejected', async t => {
-  const originalFetch = globalThis.fetch;
-  let saved: any;
-  let history = false;
-  t.mock.method(globalThis, 'fetch', async (input: any, init: any) => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.pathname.endsWith('/rpc/save_coupon')) {
-      const { p_id: id, p_coupon: body } = JSON.parse(init.body);
-      saved = { id: id || crypto.randomUUID(), code: body.code, discount_type: body.discountType, discount_value: body.discountValue, product_ids: body.productIds, starts_at: body.startsAt, expires_at: body.expiresAt, is_active: body.isActive, times_used: 0 };
-      return Response.json(saved);
-    }
-    if (url.pathname.endsWith('/rpc/delete_coupon')) {
-      if (history) return Response.json({ code: '23503', message: 'Coupon has order history' }, { status: 409 });
-      saved = undefined; return Response.json({ ok: true });
-    }
-    if (url.pathname === '/rest/v1/coupons') {
-      if (init?.method === 'PATCH') { assert.deepEqual(Object.keys(JSON.parse(init.body)), ['is_active']); Object.assign(saved, JSON.parse(init.body)); return Response.json(saved); }
-      return Response.json(saved ? [saved] : []);
-    }
-    if (url.pathname === '/rest/v1/coupon_products') return Response.json(saved?.product_ids.map((id: string) => ({ coupon_id: saved.id, product_id: id })) || []);
-    return originalFetch(input, init);
-  });
-  const body = { code: 'AUTHOR10', discountType: 'flat', discountValue: 1000, productIds: [crypto.randomUUID(), crypto.randomUUID()], startsAt: '2026-01-01T00:00:12.000Z', expiresAt: '2027-01-01T00:00:34.000Z', usageLimit: 10, usageLimitPerUser: 1, maxDiscountPaise: 1000, isActive: true };
+  const body = { code: 'AUTHOR10', discountType: 'flat', discountValue: 1000, productIds: [SEED_BOOK_IDS['the-long-afternoon'], SEED_BOOK_IDS['letters-i-never-sent']], startsAt: '2026-01-01T00:00:12.000Z', expiresAt: '2027-01-01T00:00:34.000Z', usageLimit: 10, usageLimitPerUser: 1, maxDiscountPaise: 1000, isActive: true };
   const created = await coupons.POST(request('/api/admin/coupons', 'POST', body));
   assert.equal(created.status, 200);
   const row = (await created.json()).coupon;
   assert.equal(row.code, 'author10');
-  assert.deepEqual((await (await coupons.GET(request('/api/admin/coupons'))).json()).coupons[0].product_ids, body.productIds);
+  assert.deepEqual((await (await coupons.GET(request('/api/admin/coupons'))).json()).coupons.find((c:any)=>c.id===row.id).product_ids.sort(), body.productIds.sort());
   assert.equal((await coupon.PATCH(request(`/api/admin/coupons/${row.id}`, 'PATCH', { isActive: false }), { params: { id: row.id } })).status, 200);
+  let saved = (await db.query('SELECT * FROM public.coupons WHERE id=$1',[row.id]))[0]!;
   assert.equal(saved.is_active, false);
-  assert.equal(saved.expires_at, body.expiresAt);
+  assert.equal(new Date(saved.expires_at).toISOString(), body.expiresAt);
   assert.equal((await coupon.PATCH(request(`/api/admin/coupons/${row.id}`, 'PATCH', { ...body, discountType: 'percent', discountValue: 25 }), { params: { id: row.id } })).status, 200);
+  saved = (await db.query('SELECT * FROM public.coupons WHERE id=$1',[row.id]))[0]!;
   assert.equal(saved.discount_value, 25);
   for (const invalid of [{ ...body, discountType: 'percent', discountValue: 101 }, { ...body, discountValue: 1.5 }, { ...body, expiresAt: '2025-01-01T00:00:00Z' }]) {
     assert.equal((await coupons.POST(request('/api/admin/coupons', 'POST', invalid))).status, 422);
   }
-  history = true;
+  await db.query(`SELECT public.create_checkout_order($1,'coupon-history@example.com','History reader',$2)`, [body.productIds[0],row.code]);
   assert.equal((await coupon.DELETE(request(`/api/admin/coupons/${row.id}`, 'DELETE'), { params: { id: row.id } })).status, 409);
-  history = false;
+  await db.query('DELETE FROM public.orders WHERE coupon_id=$1',[row.id]);
   assert.equal((await coupon.DELETE(request(`/api/admin/coupons/${row.id}`, 'DELETE'), { params: { id: row.id } })).status, 200);
-  assert.deepEqual((await (await coupons.GET(request('/api/admin/coupons'))).json()).coupons, []);
+  assert.equal((await (await coupons.GET(request('/api/admin/coupons'))).json()).coupons.some((c:any)=>c.id===row.id), false);
 });
 
 test('Cashfree creates a session for the server amount and verifies identity, amount, currency and successful payment', async () => {

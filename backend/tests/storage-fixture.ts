@@ -26,16 +26,6 @@ export function installStorageFixture() {
 
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.hostname === 'supabase.test.invalid' && url.pathname === '/rest/v1/rpc/validate_coupon') {
-      const body = JSON.parse(String(init?.body));
-      const code = String(body.p_code).toLowerCase();
-      const percent = code === 'launch50';
-      return Response.json(['launch50', 'read100'].includes(code) ? {
-        valid: true, coupon_id: percent ? '10000000-0000-0000-0000-000000000001' : '10000000-0000-0000-0000-000000000002',
-        discount_type: percent ? 'percent' : 'flat', discount_value: percent ? 50 : 10000,
-        discount_paise: percent ? Math.floor(body.p_subtotal_paise / 2) : Math.min(10000, body.p_subtotal_paise),
-      } : { valid: false, reason: 'not_found' });
-    }
     if (url.hostname === 'api.cloudinary.com' && url.pathname.endsWith('/download')) {
       const bytes = storedObjects.get(url.searchParams.get('public_id') || '');
       return new Response(bytes ? Uint8Array.from(bytes) : null, { status: bytes ? 200 : 404 });

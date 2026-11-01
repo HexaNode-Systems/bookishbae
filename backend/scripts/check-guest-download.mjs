@@ -1,20 +1,19 @@
 // Real browser/API/database/storage check; never creates or changes a payment.
 // Run from backend: node --env-file=.env.local --import tsx scripts/check-guest-download.mjs ORDER_UUID
 import assert from 'node:assert/strict';
-import { createAdminClient } from '../src/lib/supabase/admin.ts';
+import { db, closeDatabase } from '../src/lib/db/postgres.ts';
+import { getOrderById } from '../src/lib/db/repository.ts';
 import { env } from '../src/lib/env.ts';
 import { signDownloadToken } from '../src/lib/download-token.ts';
 import { releaseDatabaseDownload } from '../src/lib/download-entitlement.ts';
 import { launchChrome } from '../../frontend/tests/chrome-driver.mjs';
 
+try {
 assert.equal(env.CASHFREE_ENVIRONMENT, 'TEST', 'Only verify an existing sandbox order');
 const orderId = process.argv[2];
 assert.match(orderId || '', /^[a-f0-9-]{36}$/i, 'Pass the sandbox guest order UUID');
-const admin = createAdminClient();
-const { data: order, error } = await admin.from('orders')
-  .select('id,status,user_id,items:order_items(id,product_id,downloads_used,download_limit,download_limit_override)')
-  .eq('id', orderId).single();
-assert.ifError(error);
+const order = await getOrderById(orderId);
+assert.ok(order, 'Sandbox order must exist');
 assert.equal(order.status, 'paid', 'Payment must already be verified');
 assert.equal(order.user_id, null, 'Expected a guest checkout order');
 assert.equal(order.items.length, 1);
@@ -43,16 +42,16 @@ try {
   assert.equal(file.status, 200, 'Actual private Cloudinary file must be readable');
   const bytes = Buffer.from(await file.arrayBuffer());
   assert.equal(bytes.subarray(0, 5).toString(), '%PDF-', 'Full download must contain actual PDF bytes');
-  const persisted = await admin.from('order_items').select('downloads_used').eq('id', item.id).single();
-  assert.ifError(persisted.error);
-  assert.ok(persisted.data.downloads_used >= item.downloads_used + 1);
+  const [persisted] = await db.query('SELECT downloads_used FROM public.order_items WHERE id=$1',[item.id]);
+  assert.ok(persisted.downloads_used >= item.downloads_used + 1);
   console.log(JSON.stringify({ network, pdfStatus: file.status, contentType: file.headers.get('content-type'), pdfBytes: bytes.length, persistedClaim: true }));
 } finally {
   browser.close();
   if (consumed) {
     await releaseDatabaseDownload(item.id);
-    const restored = await admin.from('order_items').select('downloads_used').eq('id', item.id).single();
-    assert.ifError(restored.error);
-    console.log(JSON.stringify({ verificationSlotReleased: true, downloadsUsed: restored.data.downloads_used }));
+    const [restored] = await db.query('SELECT downloads_used FROM public.order_items WHERE id=$1',[item.id]);
+    console.log(JSON.stringify({ verificationSlotReleased: true, downloadsUsed: restored.downloads_used }));
   }
 }
+
+} finally { await closeDatabase(); }
