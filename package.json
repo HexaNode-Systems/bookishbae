@@ -26,6 +26,8 @@
     "db:seed-admin": "npm run db:seed-admin --workspace=backend"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.1.0",
+    "@fontsource/playfair-display": "^5.1.0",
     "@getbrevo/brevo": "^6.2.0",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "^1.2.2",
@@ -46,11 +48,16 @@
     "@radix-ui/react-tooltip": "^1.1.6",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.47.10",
+    "@types/node": "^20.17.11",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.20",
     "cashfree-pg": "^6.0.6",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.11.0",
     "clsx": "^2.1.1",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.21",
     "framer-motion": "^11.15.0",
     "lucide-react": "^0.469.0",
     "next": "^14.2.21",
@@ -64,18 +71,11 @@
     "tailwind-merge": "^2.5.5",
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.7.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@fontsource/inter": "^5.1.0",
-    "@fontsource/playfair-display": "^5.1.0",
     "@napi-rs/canvas": "^0.1.65",
-    "@types/node": "^20.17.11",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.21",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "tsx": "^4.19.2"
   }
 }
